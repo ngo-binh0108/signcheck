@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signcheck"
+dynamic = ["version"]
+description = "Explain Ethereum wallet signature requests (EIP-712 permits, Seaport orders, Safe transactions) and flag drainer patterns, offline."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{ name = "ngo-binh0108" }]
+keywords = ["ethereum", "eip-712", "permit2", "wallet", "security", "phishing", "safe", "seaport"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Security",
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest", "pycryptodome", "eth-account"]
+
+[project.scripts]
+signcheck = "signcheck.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ngo-binh0108/signcheck"
+
+[tool.hatch.version]
+path = "src/signcheck/__init__.py"
+
+[tool.ruff]
+line-length = 140
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
