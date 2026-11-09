@@ -117,7 +117,7 @@ DANGER   delegatecall: 0xC0FfEE0000000000000000000000000000c0fFEe runs its code 
 ## Limits
 
 - **It works offline,** so it can't see on-chain state. It doesn't know whether an address is a
-  contract or a wallet, what a token's decimals are (apart from a few well-known mainnet tokens),
+  contract or a wallet, what a token's decimals are (apart from a few well-known tokens on Ethereum, Base, Arbitrum and OP Mainnet),
   or what an unknown contract's code does. "Not a contract signcheck recognises" means *check it
   yourself*. It doesn't mean the address is malicious.
 - The list of known contracts is short on purpose: Permit2, Seaport, the main Uniswap, 1inch, 0x
