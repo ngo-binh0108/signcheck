@@ -34,6 +34,11 @@ def render(r: Report) -> str:
     return "\n".join(out)
 
 
+def render_quiet(r: Report) -> str:
+    """Only what needs attention: one line per danger or warning."""
+    return "\n".join(f"{LABELS[f.level].strip()}: {f.text}" for f in r.findings if f.level != "note")
+
+
 def read_input(source: str | None) -> str:
     if source in (None, "-"):
         if sys.stdin.isatty():
@@ -53,7 +58,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("request", nargs="?", help="a JSON file, '-' for stdin, inline JSON, or 0x calldata")
     ap.add_argument("--chain", type=int, help="chain id, when the request does not state one (default: Ethereum, 1)")
-    ap.add_argument("--json", action="store_true", help="print the report as JSON")
+    output = ap.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="print the report as JSON")
+    output.add_argument("-q", "--quiet", action="store_true", help="print only dangers and warnings, one per line")
     ap.add_argument("--now", type=int, help=argparse.SUPPRESS)  # fixed clock for tests and examples
     ap.add_argument("-V", "--version", action="version", version=f"signcheck {__version__}")
     args = ap.parse_args(argv)
@@ -66,7 +73,12 @@ def main(argv: list[str] | None = None) -> int:
         msg = f"missing field {err}" if isinstance(err, KeyError) else str(err)
         print(f"signcheck: {msg}", file=sys.stderr)
         return 1
-    print(json.dumps(report.to_dict(), indent=2) if args.json else render(report))
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    elif not args.quiet:
+        print(render(report))
+    elif report.worst in ("danger", "warning"):
+        print(render_quiet(report))
     return EXIT_DANGER if report.worst == "danger" else 0
 
 

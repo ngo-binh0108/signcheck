@@ -78,6 +78,7 @@ pbpaste | signcheck                            # stdin (Windows: Get-Clipboard |
 signcheck '{"method":"personal_sign","params":["0x48656c6c6f","0x1234..."]}'
 signcheck 0x095ea7b3000000000000000000000000...  # bare calldata
 signcheck safe-tx.json --json                  # machine-readable
+signcheck safe-tx.json --quiet                 # only dangers and warnings, one per line
 signcheck tx.json --chain 8453                 # chain for requests that don't name one (default 1)
 ```
 
