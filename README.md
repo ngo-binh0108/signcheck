@@ -60,6 +60,7 @@ the transaction does.
 | Safe `SafeTx` | target, value, `call` / `delegatecall`, decoded calldata, every call inside a MultiSend batch; **delegatecalls**, owner, threshold, module, guard and implementation changes, gas refunds |
 | `personal_sign` | the text, Sign-In with Ethereum (site shown), bare 32-byte hashes |
 | `eth_sign` | always dangerous |
+| EIP-7702 `authorizationList` in a transaction | which code your account would run and on which chain, the authorization hash; **any delegation**, including one valid on every chain |
 | `eth_sendTransaction`, `wallet_sendCalls`, bare calldata | `approve`, `increaseAllowance`, `setApprovalForAll`, transfers, Permit2 `approve`, Safe settings calls, `multiSend` |
 | anything else in EIP-712 | every field, with addresses named where known |
 

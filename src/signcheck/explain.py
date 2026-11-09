@@ -527,6 +527,7 @@ def explain_transaction(tx: dict, ctx: Context) -> Report:
     r.add("network", known.chain_name(ctx.chain))
     if tx.get("from"):
         r.add("from", ctx.addr(tx["from"]))
+    _authorizations(r, tx.get("authorizationList") or [], ctx)
     if not to:
         r.add("to", "none: this deploys a new contract")
         r.add("value", ctx.native(value))
@@ -535,6 +536,45 @@ def explain_transaction(tx: dict, ctx: Context) -> Report:
     r.add("to", ctx.addr(to))
     _call(r, checksum(to), value, data, ctx)
     return r
+
+
+def _rlp(payload: bytes, offset: int = 0x80) -> bytes:
+    if offset == 0x80 and len(payload) == 1 and payload[0] < 0x80:
+        return payload
+    if len(payload) < 56:
+        return bytes([offset + len(payload)]) + payload
+    size = len(payload).to_bytes((len(payload).bit_length() + 7) // 8, "big")
+    return bytes([offset + 55 + len(size)]) + size + payload
+
+
+def _authorization_hash(chain: int, target: str, nonce: int) -> bytes:
+    """The EIP-7702 digest: keccak256(0x05 || rlp([chain_id, address, nonce]))."""
+    chain_bytes, nonce_bytes = (n.to_bytes((n.bit_length() + 7) // 8, "big") for n in (chain, nonce))
+    return keccak256(b"\x05" + _rlp(_rlp(chain_bytes) + _rlp(bytes.fromhex(target[2:])) + _rlp(nonce_bytes), 0xC0))
+
+
+def _authorizations(r: Report, items: list, ctx: Context) -> None:
+    """EIP-7702: each entry makes the signer's account run the code at another address."""
+    for i, auth in enumerate(items, 1):
+        name = f"authorization {i}"
+        target = auth.get("address") or auth.get("contractAddress")
+        if not target:
+            raise TypedDataError(f"{name}: no address")
+        target = checksum(target)
+        chain = to_int(auth.get("chainId", 0))
+        where = "every chain" if chain == 0 else known.chain_name(chain)
+        if target == checksum(ZERO):
+            r.add(name, f"removes the delegation from your account on {where}")
+            r.note(f"{name}: this clears an earlier delegation, so your account goes back to being a plain wallet.")
+        else:
+            r.add(name, f"makes your account run the code at {ctx.addr(target)} on {where}")
+            r.danger(
+                f"{name}: the code at {target} would run as your own account on {where}, and it can move everything you "
+                "hold without asking again until the delegation is replaced. Only sign if your wallet itself offered "
+                "this upgrade."
+            )
+        if "nonce" in auth:
+            r.hashes.append((f"{name} hash", "0x" + _authorization_hash(chain, target, to_int(auth["nonce"])).hex()))
 
 
 def explain_calls(params: dict, ctx: Context) -> Report:
@@ -599,7 +639,7 @@ def explain(request, chain: int | None = None, now: float | None = None) -> Repo
         raise TypedDataError(f"unsupported method {method!r}")
     if {"types", "primaryType"} <= request.keys():
         return explain_typed_data(request, ctx)
-    if request.keys() & {"to", "data", "input"}:
+    if request.keys() & {"to", "data", "input", "authorizationList"}:
         return explain_transaction(request, ctx)
     if "calls" in request:
         return explain_calls(request, ctx)

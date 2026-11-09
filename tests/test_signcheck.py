@@ -311,3 +311,36 @@ def test_cli_json(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["title"] == "Token permit (ERC-2612)"
     assert {f["level"] for f in out["findings"]} == {"warning"}
+
+
+# ---------------------------------------------------------------- EIP-7702
+
+
+def authorization_tx(**auth):
+    return {"method": "eth_sendTransaction", "params": [{"from": ALICE, "to": ALICE, "chainId": "0x1", "authorizationList": [auth]}]}
+
+
+@pytest.mark.parametrize("chain, nonce", [(0, 0), (1, 7), (8453, 128), (2**64, 2**32)])
+def test_authorization_hash_matches_eth_account(chain, nonce):
+    from eth_account.typed_transactions.set_code_transaction import Authorization
+
+    r = explain(authorization_tx(chainId=chain, address=BAD, nonce=nonce))
+    expected = Authorization(chain, bytes.fromhex(BAD[2:]), nonce).hash()
+    assert dict(r.hashes)["authorization 1 hash"] == "0x" + bytes(expected).hex()
+
+
+def test_delegation_on_every_chain_is_dangerous():
+    r = explain(authorization_tx(chainId="0x0", address=BAD, nonce="0x7"))
+    assert r.worst == "danger"
+    assert "on every chain" in text(r)
+
+
+def test_clearing_a_delegation_is_only_a_note():
+    r = explain(authorization_tx(chainId=1, address="0x" + "0" * 40, nonce=8))
+    assert r.worst == "note"
+    assert "removes the delegation" in " ".join(v for _, v in r.fields)
+
+
+def test_authorization_needs_an_address():
+    with pytest.raises(eip712.TypedDataError):
+        explain(authorization_tx(chainId=1, nonce=8))
