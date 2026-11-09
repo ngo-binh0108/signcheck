@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from signcheck import abi, eip712
+from signcheck import abi, eip712, known
 from signcheck.cli import main
 from signcheck.explain import explain
 from signcheck.keccak import keccak256
@@ -344,3 +344,25 @@ def test_clearing_a_delegation_is_only_a_note():
 def test_authorization_needs_an_address():
     with pytest.raises(eip712.TypedDataError):
         explain(authorization_tx(chainId=1, nonce=8))
+
+
+# ---------------------------------------------------------------- known tokens
+
+
+@pytest.mark.parametrize(
+    "chain, address, expected",
+    [
+        (8453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", ("USDC", 6)),
+        (42161, "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", ("USDT", 6)),
+        (10, "0x4200000000000000000000000000000000000006", ("WETH", 18)),
+    ],
+)
+def test_l2_tokens_are_named_only_on_their_own_chain(chain, address, expected):
+    assert known.token(address, chain) == expected
+    assert known.token(address, 1) is None
+
+
+def test_l2_token_amount_is_shown_in_units():
+    data = abi.selector("transfer(address,uint256)") + bytes(12) + bytes.fromhex(BAD[2:]) + (2_500_000).to_bytes(32, "big")
+    r = explain({"chainId": 8453, "to": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "data": "0x" + data.hex()})
+    assert "sends 2.5 USDC" in text(r)
