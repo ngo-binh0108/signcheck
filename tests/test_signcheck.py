@@ -313,6 +313,22 @@ def test_cli_json(capsys):
     assert {f["level"] for f in out["findings"]} == {"warning"}
 
 
+def test_cli_quiet_prints_one_line_per_problem(capsys):
+    assert main([str(EXAMPLES / "seaport-free-listing.json"), "--quiet", "--now", str(NOW)]) == 3
+    lines = capsys.readouterr().out.splitlines()
+    assert lines and all(line.startswith(("DANGER: ", "WARNING: ")) for line in lines)
+
+
+def test_cli_quiet_is_silent_without_problems(capsys):
+    assert main([str(EXAMPLES / "siwe.json"), "-q"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_quiet_and_json_cannot_be_combined():
+    with pytest.raises(SystemExit):
+        main([str(EXAMPLES / "siwe.json"), "--quiet", "--json"])
+
+
 # ---------------------------------------------------------------- EIP-7702
 
 
