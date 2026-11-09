@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from signcheck import abi, eip712
+from signcheck import abi, eip712, known
 from signcheck.cli import main
 from signcheck.explain import explain
 from signcheck.keccak import keccak256
@@ -327,3 +327,58 @@ def test_cli_quiet_is_silent_without_problems(capsys):
 def test_cli_quiet_and_json_cannot_be_combined():
     with pytest.raises(SystemExit):
         main([str(EXAMPLES / "siwe.json"), "--quiet", "--json"])
+
+
+# ---------------------------------------------------------------- EIP-7702
+
+
+def authorization_tx(**auth):
+    return {"method": "eth_sendTransaction", "params": [{"from": ALICE, "to": ALICE, "chainId": "0x1", "authorizationList": [auth]}]}
+
+
+@pytest.mark.parametrize("chain, nonce", [(0, 0), (1, 7), (8453, 128), (2**64, 2**32)])
+def test_authorization_hash_matches_eth_account(chain, nonce):
+    from eth_account.typed_transactions.set_code_transaction import Authorization
+
+    r = explain(authorization_tx(chainId=chain, address=BAD, nonce=nonce))
+    expected = Authorization(chain, bytes.fromhex(BAD[2:]), nonce).hash()
+    assert dict(r.hashes)["authorization 1 hash"] == "0x" + bytes(expected).hex()
+
+
+def test_delegation_on_every_chain_is_dangerous():
+    r = explain(authorization_tx(chainId="0x0", address=BAD, nonce="0x7"))
+    assert r.worst == "danger"
+    assert "on every chain" in text(r)
+
+
+def test_clearing_a_delegation_is_only_a_note():
+    r = explain(authorization_tx(chainId=1, address="0x" + "0" * 40, nonce=8))
+    assert r.worst == "note"
+    assert "removes the delegation" in " ".join(v for _, v in r.fields)
+
+
+def test_authorization_needs_an_address():
+    with pytest.raises(eip712.TypedDataError):
+        explain(authorization_tx(chainId=1, nonce=8))
+
+
+# ---------------------------------------------------------------- known tokens
+
+
+@pytest.mark.parametrize(
+    "chain, address, expected",
+    [
+        (8453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", ("USDC", 6)),
+        (42161, "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", ("USDT", 6)),
+        (10, "0x4200000000000000000000000000000000000006", ("WETH", 18)),
+    ],
+)
+def test_l2_tokens_are_named_only_on_their_own_chain(chain, address, expected):
+    assert known.token(address, chain) == expected
+    assert known.token(address, 1) is None
+
+
+def test_l2_token_amount_is_shown_in_units():
+    data = abi.selector("transfer(address,uint256)") + bytes(12) + bytes.fromhex(BAD[2:]) + (2_500_000).to_bytes(32, "big")
+    r = explain({"chainId": 8453, "to": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "data": "0x" + data.hex()})
+    assert "sends 2.5 USDC" in text(r)
