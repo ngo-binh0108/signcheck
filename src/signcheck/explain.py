@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from signcheck import abi, eip712, known
+from signcheck import abi, eip712, known, router
 from signcheck.eip712 import TypedDataError, checksum, to_bytes, to_int
 from signcheck.keccak import keccak256
 
@@ -70,6 +70,7 @@ class Context:
         self.chain = chain
         self.now = int(time.time() if now is None else now)
         self.bare = False  # only calldata given: the target contract is unknown
+        self.sender: str | None = None  # the account sending the transaction, when the request says
 
     def addr(self, value) -> str:
         a = checksum(value)
@@ -431,6 +432,8 @@ def _call(r: Report, to: str, value: int, data: bytes, ctx: Context, safe: str |
             if sub_value:
                 r.add(p + "value", ctx.native(sub_value))
             _call(r, sub_to, sub_value, sub_data, ctx, safe, p)
+    elif call.name == "execute":
+        router.explain_execute(r, a, to, ctx, prefix, safe or ctx.sender)
     elif call.name in SAFE_SETTINGS:
         text = SAFE_SETTINGS[call.name].format(**{k: (checksum(v) if isinstance(v, str) else v) for k, v in a.items()})
         r.add(prefix + "action", text)
@@ -527,6 +530,7 @@ def explain_transaction(tx: dict, ctx: Context) -> Report:
     r.add("network", known.chain_name(ctx.chain))
     if tx.get("from"):
         r.add("from", ctx.addr(tx["from"]))
+        ctx.sender = checksum(tx["from"])
     _authorizations(r, tx.get("authorizationList") or [], ctx)
     if not to:
         r.add("to", "none: this deploys a new contract")
@@ -584,6 +588,8 @@ def explain_calls(params: dict, ctx: Context) -> Report:
     calls = params.get("calls") or []
     r = Report(f"Batch of {len(calls)} calls (wallet_sendCalls)")
     r.add("network", known.chain_name(ctx.chain))
+    if params.get("from"):
+        ctx.sender = checksum(params["from"])
     for i, c in enumerate(calls, 1):
         p = f"call {i}: "
         data = c.get("data") or "0x"

@@ -30,6 +30,9 @@ SIGNATURES = [
     "setFallbackHandler(address handler)",
     "changeMasterCopy(address masterCopy)",
     "multiSend(bytes transactions)",
+    # Uniswap Universal Router
+    "execute(bytes commands,bytes[] inputs,uint256 deadline)",
+    "execute(bytes commands,bytes[] inputs)",
 ]
 
 
@@ -70,6 +73,9 @@ def decode(data: bytes) -> Call | None:
         return None
     name, params = _split(sig)
     body = data[4:]
+    if any(t.endswith("[]") for t, _ in params):
+        values = decode_values([t for t, _ in params], body)
+        return Call(name, sig, {n: v for (_, n), v in zip(params, values)})
     args = {}
     for i, (t, n) in enumerate(params):
         word = _word(body, 32 * i)
@@ -93,6 +99,83 @@ def decode(data: bytes) -> Call | None:
                 raise ValueError(f"{n} is cut short")
             args[n] = blob
     return Call(name, sig, args)
+
+
+def split_types(text: str) -> list[str]:
+    """Split "address,(uint24,bytes)[],bool" at its top-level commas."""
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(text):
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            out.append(text[start:i])
+            start = i + 1
+    if text[start:]:
+        out.append(text[start:])
+    return out
+
+
+def _dynamic(t: str) -> bool:
+    if t.endswith("[]") or t in ("bytes", "string"):
+        return True
+    return t.startswith("(") and any(_dynamic(s) for s in split_types(t[1:-1]))
+
+
+def _head_size(t: str) -> int:
+    if t.startswith("(") and not _dynamic(t):
+        return sum(_head_size(s) for s in split_types(t[1:-1]))
+    return 32
+
+
+def decode_values(types: list[str], data: bytes, base: int = 0) -> list:
+    """ABI-decode a list of types, as abi.decode does in Solidity. Tuples are written "(...)", arrays "T[]"."""
+    out, head = [], base
+    for t in types:
+        if _dynamic(t):
+            offset = int.from_bytes(_word(data, head), "big")
+            if base + offset > len(data):
+                raise ValueError("an offset points past the end of the data")
+            out.append(_decode_one(t, data, base + offset))
+        else:
+            out.append(_decode_one(t, data, head))
+        head += _head_size(t)
+    return out
+
+
+def _decode_one(t: str, data: bytes, pos: int):
+    if t.endswith("[]"):  # before tuples: "(...)[]" is an array of tuples
+        n = int.from_bytes(_word(data, pos), "big")
+        if n * 32 > len(data):
+            raise ValueError("an array is longer than the data")
+        return decode_values([t[:-2]] * n, data, pos + 32)
+    if t.startswith("("):
+        return decode_values(split_types(t[1:-1]), data, pos)
+    if t == "bytes":
+        n = int.from_bytes(_word(data, pos), "big")
+        blob = data[pos + 32 : pos + 32 + n]
+        if len(blob) != n:
+            raise ValueError("bytes are cut short")
+        return blob
+    value = int.from_bytes(_word(data, pos), "big")
+    if t == "address":
+        if value >> 160:
+            raise ValueError("an address has more than 20 bytes")
+        return checksum(value)
+    if t == "bool":
+        if value > 1:
+            raise ValueError("a bool is neither 0 nor 1")
+        return bool(value)
+    if t.startswith("uint"):
+        if value >> int(t[4:] or 256):
+            raise ValueError(f"a value is out of range for {t}")
+        return value
+    if t.startswith("int"):
+        bits = int(t[3:] or 256)
+        value -= (1 << 256) if value >> 255 else 0
+        if not -(1 << (bits - 1)) <= value < 1 << (bits - 1):
+            raise ValueError(f"a value is out of range for {t}")
+        return value
+    raise ValueError(f"cannot decode type {t}")
 
 
 def multisend(data: bytes) -> list[tuple[int, str, int, bytes]]:

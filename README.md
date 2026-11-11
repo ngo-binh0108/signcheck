@@ -62,6 +62,7 @@ the transaction does.
 | `eth_sign` | always dangerous |
 | EIP-7702 `authorizationList` in a transaction | which code your account would run and on which chain, the authorization hash; **any delegation**, including one valid on every chain |
 | `eth_sendTransaction`, `wallet_sendCalls`, bare calldata | `approve`, `increaseAllowance`, `setApprovalForAll`, transfers, Permit2 `approve`, Safe settings calls, `multiSend` |
+| Uniswap Universal Router `execute` | every step: v2, v3 and v4 swaps, Permit2 permits and transfers, sweeps, fees, wrapping; **output or Permit2 tokens sent to an address that isn't yours**, a Permit2 allowance for another spender, swaps with no minimum output, fees over 1% |
 | anything else in EIP-712 | every field, with addresses named where known |
 
 It also gives the EIP-712 **domain hash** and **message hash** that hardware wallets such as
@@ -106,6 +107,31 @@ DANGER   delegatecall: 0xC0FfEE0000000000000000000000000000c0fFEe runs its code 
          holds. Bybit lost about $1.5 billion in February 2025 after its signers approved a
          delegatecall like this. Only sign if you know exactly what this contract is.
 ```
+
+A Universal Router call is a list of steps, and a v4 swap is a list of actions inside one. This one,
+[examples/uniswap-v4-swap-to-another-address.json](examples/uniswap-v4-swap-to-another-address.json),
+is a real Ethereum transaction that sends the ETH from the swap to an address other than the sender,
+with no minimum output:
+
+```
+$ signcheck examples/uniswap-v4-swap-to-another-address.json
+Transaction
+  ...
+  to                            0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af (Uniswap Universal Router (v4))
+  function                      execute(bytes commands,bytes[] inputs,uint256 deadline)
+  steps                         1 (Uniswap Universal Router)
+  step 1: v4 action 1: swap     120749309223324145270877 raw units of token 0x35eB...F989 for at least 0 ETH (Uniswap v4, fee 0%)
+  step 1: v4 action 2: pay      up to 120749309223324145270877 raw units of token 0x35eB...F989, from you
+  step 1: v4 action 3: receive  all the ETH from the swap, to 0x578aB972E8B3863940E58e89E59fD9017BC0f2AC
+
+WARNING  0x578aB972E8B3863940E58e89E59fD9017BC0f2AC receives all the ETH from the swap, and it
+         is not the address sending this transaction.
+WARNING  step 1: v4 action 1: The swap accepts any amount out, even nothing, and no later action
+         sets a minimum, so a sandwich bot can take almost all of it.
+```
+
+Whether the output goes to you can only be checked when the request says who sends it (`from`). With bare
+calldata, signcheck names the recipients and asks you to check them.
 
 ## Where to get the request
 
