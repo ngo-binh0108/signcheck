@@ -382,3 +382,169 @@ def test_l2_token_amount_is_shown_in_units():
     data = abi.selector("transfer(address,uint256)") + bytes(12) + bytes.fromhex(BAD[2:]) + (2_500_000).to_bytes(32, "big")
     r = explain({"chainId": 8453, "to": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "data": "0x" + data.hex()})
     assert "sends 2.5 USDC" in text(r)
+
+
+# --- Uniswap Universal Router ---------------------------------------------------
+
+ROUTER = "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+HOOK = "0x0000000000000000000000000000000000004444"
+ME, THIS = "0x" + "0" * 39 + "1", "0x" + "0" * 39 + "2"  # MSG_SENDER and ADDRESS_THIS in router calls
+POOL = "(address,address,uint24,int24,address)"
+V3_IN = ["address", "uint256", "uint256", "bytes", "bool"]
+PERMIT_SINGLE = ["((address,uint160,uint48,uint48),address,uint256)", "bytes"]
+
+
+def enc(types, values):
+    return pytest.importorskip("eth_abi").encode(types, values)
+
+
+def v3_path(*parts):
+    """token, fee, token, fee, token ... packed as in Uniswap v3."""
+    out = b""
+    for i, p in enumerate(parts):
+        out += bytes.fromhex(p[2:]) if i % 2 == 0 else p.to_bytes(3, "big")
+    return out
+
+
+def router_tx(steps, deadline=NOW + 600, sender=ALICE, to=ROUTER):
+    """steps: (command byte, types, values) each."""
+    data = abi.selector("execute(bytes,bytes[],uint256)") + enc(
+        ["bytes", "bytes[]", "uint256"], [bytes(c for c, _, _ in steps), [enc(t, v) for _, t, v in steps], deadline]
+    )
+    tx = {"to": to, "data": "0x" + data.hex(), "chainId": 1}
+    if sender:
+        tx["from"] = sender
+    return {"method": "eth_sendTransaction", "params": [tx]}
+
+
+def v4_swap(actions):
+    """A V4_SWAP command from (action byte, types, values) each."""
+    return (0x10, ["bytes", "bytes[]"], [bytes(a for a, _, _ in actions), [enc(t, v) for _, t, v in actions]])
+
+
+def test_router_selectors():
+    assert abi.selector("execute(bytes,bytes[],uint256)").hex() == "3593564c"
+    assert abi.selector("execute(bytes,bytes[])").hex() == "24856bc3"
+
+
+def test_decode_values_matches_eth_abi():
+    types = ["(address,(address,uint24,int24,address,bytes)[],uint128,uint128)", "int24", "bytes[]", "bool"]
+    values = [(USDC, [(WETH, 500, -10, HOOK, b"\x01\x02"), (PERMIT2, 3000, 60, BAD, b"")], 5, 7), -887272, [b"", b"ab" * 40], True]
+    decoded = abi.decode_values(types, enc(types, values))
+    start, path, amount, minimum = decoded[0]
+    assert start == USDC and path[0] == [WETH, 500, -10, eip712.checksum(HOOK), b"\x01\x02"]
+    assert path[1][4] == b"" and (amount, minimum) == (5, 7)
+    assert decoded[1:] == [-887272, [b"", b"ab" * 40], True]
+    with pytest.raises(ValueError):
+        abi.decode_values(types, enc(types, values)[:-40])
+
+
+def test_v3_swap_to_yourself_is_quiet():
+    path = v3_path(USDC, 500, WETH)
+    r = explain(router_tx([(0x00, V3_IN, [ME, 1000 * 10**6, 3 * 10**17, path, True])]), now=NOW)
+    assert ("step 1: swap", "1,000 USDC for at least 0.3 WETH on Uniswap v3, to you (the sender)") in r.fields
+    assert ("steps", "1 (Uniswap Universal Router)") in r.fields
+    assert levels(r) == []
+
+
+def test_v3_exact_output_path_runs_backwards():
+    path = v3_path(WETH, 500, USDC)  # output first
+    r = explain(router_tx([(0x01, V3_IN, [ALICE, 10**18, 4000 * 10**6, path, True])]), now=NOW)
+    assert ("step 1: swap", f"at most 4,000 USDC for 1 WETH on Uniswap v3, to you ({ALICE})") in r.fields
+
+
+def test_swap_output_to_someone_else_and_no_minimum():
+    path = v3_path(USDC, 500, WETH)
+    r = explain(router_tx([(0x00, V3_IN, [BAD, 10**6, 0, path, True])]), now=NOW)
+    assert levels(r) == ["warning", "warning"]
+    assert "sandwich" in text(r)
+    assert f"{eip712.checksum(BAD)} receives the WETH from this swap, and it is not the address sending this transaction." in text(r)
+
+
+def test_without_a_sender_a_stranger_recipient_is_only_a_note():
+    path = v3_path(USDC, 500, WETH)
+    r = explain(router_tx([(0x00, V3_IN, [BAD, 10**6, 1, path, True])], sender=None), now=NOW)
+    assert levels(r) == ["note"] and "Make sure that is your address" in text(r)
+
+
+def test_permit2_permit_for_another_spender_is_danger():
+    details = (USDC, 2**160 - 1, NOW + 86400, 0)
+    r = explain(router_tx([(0x0A, PERMIT_SINGLE, [(details, BAD, NOW + 600), b"\x00" * 65])]), now=NOW)
+    assert levels(r) == ["danger"]
+    assert "not for the router being called" in text(r)
+    ok = explain(router_tx([(0x0A, PERMIT_SINGLE, [(details, ROUTER, NOW + 600), b""])]), now=NOW)
+    assert levels(ok) == [] and "the router may spend unlimited USDC" in text(ok)
+
+
+def test_permit2_transfer_to_someone_else():
+    r = explain(router_tx([(0x02, ["address", "address", "uint160"], [USDC, BAD, 5 * 10**6])]), now=NOW)
+    assert levels(r) == ["warning"]
+    assert "receives 5 USDC taken from your wallet through Permit2" in text(r)
+    assert levels(explain(router_tx([(0x02, ["address", "address", "uint160"], [USDC, ROUTER, 1])]), now=NOW)) == []
+
+
+@pytest.mark.parametrize("bips, warned", [(25, False), (500, True)])
+def test_pay_portion_fee(bips, warned):
+    r = explain(router_tx([(0x06, ["address", "address", "uint256"], [WETH, BAD, bips])]), now=NOW)
+    assert ("step 1: fee", f"{bips / 100:g}% of the WETH to {eip712.checksum(BAD)}") in r.fields
+    assert levels(r) == (["warning"] if warned else [])
+
+
+def test_unknown_command_and_allow_revert_flag():
+    sweep = (0x80 | 0x04, ["address", "address", "uint256"], [WETH, ME, 0])
+    r = explain(router_tx([(0x1F, ["uint256"], [1]), sweep]), now=NOW)
+    assert ("step 1: command", "unknown (0x1f)") in r.fields
+    assert ("step 2: sweep", "all WETH left in the router to you (the sender)") in r.fields
+    assert levels(r) == ["warning"]
+
+
+def test_sub_plan_steps_are_explained():
+    inner = enc(["address", "address", "uint256"], [USDC, BAD, 10**6])
+    r = explain(router_tx([(0x21, ["bytes", "bytes[]"], [bytes([0x05]), [inner]])]), now=NOW)
+    assert ("step 1: sub-plan step 1: transfer", f"1 USDC to {eip712.checksum(BAD)}") in r.fields
+    assert levels(r) == ["warning"]
+
+
+def test_old_router_nft_commands_are_not_guessed():
+    r = explain(router_tx([(0x10, ["uint256"], [1])], to="0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"), now=NOW)
+    assert ("step 1: command", "NFT market command 0x10, not decoded") in r.fields
+
+
+def single(min_out, fee=3000, hooks="0x" + "0" * 40):
+    key = (USDC, WETH, fee, 60, hooks)
+    return (0x06, [f"({POOL},bool,uint128,uint128,bytes)"], [(key, True, 1000 * 10**6, min_out, b"")])
+
+
+SETTLE_ALL = (0x0C, ["address", "uint256"], [USDC, 1000 * 10**6])
+
+
+def test_v4_swap_with_minimum_in_take_all_is_quiet():
+    take_all = (0x0F, ["address", "uint256"], [WETH, 3 * 10**17])
+    r = explain(router_tx([v4_swap([single(0), SETTLE_ALL, take_all])]), now=NOW)
+    assert ("step 1: v4 action 1: swap", "1,000 USDC for at least 0 WETH (Uniswap v4, fee 0.3%)") in r.fields
+    assert ("step 1: v4 action 2: pay", "up to 1,000 USDC, from you") in r.fields
+    assert ("step 1: v4 action 3: receive", "the WETH from the swap (at least 0.3 WETH), to you") in r.fields
+    assert levels(r) == []
+
+
+def test_v4_swap_with_no_minimum_anywhere_and_output_elsewhere():
+    take = (0x0E, ["address", "address", "uint256"], [WETH, BAD, 0])
+    r = explain(router_tx([v4_swap([single(0, fee=0x800000, hooks=HOOK), SETTLE_ALL, take])]), now=NOW)
+    assert ("step 1: v4 action 1: swap", "1,000 USDC for at least 0 WETH (Uniswap v4, dynamic fee)") in r.fields
+    assert ("step 1: v4 action 3: receive", f"all the WETH from the swap, to {eip712.checksum(BAD)}") in r.fields
+    assert sorted(levels(r)) == ["note", "warning", "warning"]
+    assert "hook contract" in text(r) and "no later action sets a minimum" in text(r)
+
+
+def test_real_v4_swap_example():
+    r = explain((EXAMPLES / "uniswap-v4-swap-to-another-address.json").read_text(), now=NOW)
+    assert ("to", f"{ROUTER} (Uniswap Universal Router (v4))") in r.fields
+    assert ("step 1: v4 action 3: receive", "all the ETH from the swap, to 0x578aB972E8B3863940E58e89E59fD9017BC0f2AC") in r.fields
+    assert levels(r) == ["warning", "warning"]
+
+
+def test_router_deadline():
+    r = explain(router_tx([(0x0B, ["address", "uint256"], [THIS, 10**18])], deadline=NOW - 60), now=NOW)
+    assert ("step 1: wrap", "ETH into WETH, to the router, for a later step") in r.fields
+    assert "The deadline has passed" in text(r)
