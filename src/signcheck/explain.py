@@ -6,7 +6,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from signcheck import abi, eip712, known, router
 from signcheck.eip712 import TypedDataError, checksum, to_bytes, to_int
@@ -14,6 +14,7 @@ from signcheck.keccak import keccak256
 
 MAX_UINT160 = (1 << 160) - 1
 YEAR = 365 * 24 * 3600
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 NEVER = 1 << 40  # a timestamp past the year 36000
 ZERO = "0x" + "0" * 40
 
@@ -102,10 +103,12 @@ class Context:
     def when(self, ts: int) -> str:
         if ts >= NEVER:
             return "never"
+        # epoch + timedelta rather than fromtimestamp(), which raises OSError on
+        # Windows for dates after year 3000
         try:
-            dt = datetime.fromtimestamp(ts, timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return f"never ({ts})"
+            dt = EPOCH + timedelta(seconds=ts)
+        except OverflowError:
+            return f"after the year 9999 ({ts})"
         return f"{dt:%Y-%m-%d %H:%M} UTC ({relative(ts - self.now)})"
 
     def check_deadline(self, r: Report, ts: int, what: str) -> None:

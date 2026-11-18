@@ -185,6 +185,13 @@ def test_permit_deadlines():
     assert "in 3 years" in text(explain(permit(deadline=NOW + 3 * 366 * 86400), now=NOW))
 
 
+def test_far_future_deadlines_show_a_date():
+    # fromtimestamp() fails for these on Windows, which made them read "never"
+    t = text(explain(permit(deadline=2**36), now=NOW))
+    assert "4147-08-20" in t and "never" not in t
+    assert "after the year 9999" in text(explain(permit(deadline=2**39), now=NOW))
+
+
 def test_permit2_allowance():
     r = explain(permit2_single((1 << 160) - 1, NOW + 30 * 86400, "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"), now=NOW)
     assert r.title == "Permit2 allowance"
