@@ -231,6 +231,22 @@ def test_safe_multisend_batch_is_decoded():
     assert levels(r) == ["note", "warning", "warning", "danger"]
 
 
+def test_value_is_listed_once_for_a_call_with_data():
+    approve = abi.selector("approve(address,uint256)") + bytes(12) + bytes.fromhex(BAD[2:]) + (7).to_bytes(32, "big")
+    td = json.loads((EXAMPLES / "safe-batch.json").read_text())
+    td["message"].update(to=USDC, value=str(10**18), data="0x" + approve.hex(), operation=0)
+    assert [k for k, _ in explain(td, now=NOW).fields].count("value") == 1
+
+    # the same inside a multiSend batch
+    packed = bytes([0]) + bytes.fromhex(USDC[2:]) + (10**18).to_bytes(32, "big") + len(approve).to_bytes(32, "big") + approve
+    size = len(packed)
+    batch = abi.selector("multiSend(bytes)") + (32).to_bytes(32, "big") + size.to_bytes(32, "big") + packed + bytes(-size % 32)
+    td = json.loads((EXAMPLES / "safe-batch.json").read_text())
+    td["message"]["data"] = "0x" + batch.hex()
+    keys = [k for k, _ in explain(td, now=NOW).fields]
+    assert keys.count("call 1: value") == 1
+
+
 def test_multisend_roundtrip():
     inner = abi.selector("transfer(address,uint256)") + bytes(12) + bytes.fromhex(BAD[2:]) + (7).to_bytes(32, "big")
     packed = bytes([0]) + bytes.fromhex(USDC[2:]) + (0).to_bytes(32, "big") + len(inner).to_bytes(32, "big") + inner
