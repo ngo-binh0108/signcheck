@@ -586,11 +586,15 @@ def explain_calls(params: dict, ctx: Context) -> Report:
     if "chainId" in params:
         ctx.chain = to_int(params["chainId"])
     calls = params.get("calls") or []
+    if not isinstance(calls, list):
+        raise TypedDataError("wallet_sendCalls: calls must be a list")
     r = Report(f"Batch of {len(calls)} calls (wallet_sendCalls)")
     r.add("network", known.chain_name(ctx.chain))
     if params.get("from"):
         ctx.sender = checksum(params["from"])
     for i, c in enumerate(calls, 1):
+        if not isinstance(c, dict):
+            raise TypedDataError(f"call {i} is not a JSON object")
         p = f"call {i}: "
         data = c.get("data") or "0x"
         value = to_int(c.get("value", 0))
@@ -638,10 +642,12 @@ def explain(request, chain: int | None = None, now: float | None = None) -> Repo
             return explain_personal_sign(message, ctx)
         if method == "eth_sign":
             return explain_eth_sign(params[-1] if params else "", ctx)
-        if method in ("eth_sendTransaction", "eth_signTransaction"):
+        if method in ("eth_sendTransaction", "eth_signTransaction", "wallet_sendCalls"):
+            if not params or not isinstance(params[0], dict):
+                raise TypedDataError(f"{method}: expected an object as the first param")
+            if method == "wallet_sendCalls":
+                return explain_calls(params[0], ctx)
             return explain_transaction(params[0], ctx)
-        if method == "wallet_sendCalls":
-            return explain_calls(params[0], ctx)
         raise TypedDataError(f"unsupported method {method!r}")
     if {"types", "primaryType"} <= request.keys():
         return explain_typed_data(request, ctx)
