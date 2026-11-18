@@ -365,15 +365,27 @@ def _safe_tx(r: Report, msg: dict, safe, ctx: Context) -> None:
                 "and move everything the Safe holds. Bybit lost about $1.5 billion in February 2025 after its signers "
                 "approved a delegatecall like this. Only sign if you know exactly what this contract is."
             )
-    _call(r, to, value, data, ctx, safe=checksum(safe) if safe else None)
+    _call(r, to, value, data, ctx, safe=checksum(safe) if safe else None, show_value=False)
     gas_price = to_int(msg.get("gasPrice", 0))
     refund = msg.get("refundReceiver", ZERO)
     if gas_price and checksum(refund) != ZERO:
         r.warn(f"The Safe pays a gas refund (gas price {gas_price}) to {checksum(refund)}.")
 
 
-def _call(r: Report, to: str, value: int, data: bytes, ctx: Context, safe: str | None = None, prefix: str = "") -> None:
-    """Describe one call: a transaction, a Safe transaction or one call inside a batch."""
+def _call(
+    r: Report,
+    to: str,
+    value: int,
+    data: bytes,
+    ctx: Context,
+    safe: str | None = None,
+    prefix: str = "",
+    show_value: bool = True,
+) -> None:
+    """Describe one call: a transaction, a Safe transaction or one call inside a batch.
+
+    show_value=False when the caller has already listed the value.
+    """
     if not data:
         r.add(prefix + "action", f"send {ctx.native(value)}" if value else "empty call")
         return
@@ -429,8 +441,6 @@ def _call(r: Report, to: str, value: int, data: bytes, ctx: Context, safe: str |
             r.add(p + "to", f"{ctx.addr(sub_to)}{' via delegatecall' if op == 1 else ''}")
             if op == 1:
                 r.danger(f"{p}delegatecall to {sub_to} runs its code as the Safe and can take full control of it.")
-            if sub_value:
-                r.add(p + "value", ctx.native(sub_value))
             _call(r, sub_to, sub_value, sub_data, ctx, safe, p)
     elif call.name == "execute":
         router.explain_execute(r, a, to, ctx, prefix, safe or ctx.sender)
@@ -445,7 +455,7 @@ def _call(r: Report, to: str, value: int, data: bytes, ctx: Context, safe: str |
             r.danger(f"{prefix}This {text}, so a single owner can then move everything the Safe holds.")
         else:
             r.warn(f"{prefix}This changes who controls the Safe: it {text}.")
-    if value:
+    if value and show_value:
         r.add(prefix + "value", ctx.native(value))
 
 
