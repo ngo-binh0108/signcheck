@@ -145,8 +145,12 @@ def parse(obj) -> dict:
             raise TypedDataError(f"typed data is not valid JSON: {err}") from None
     if not isinstance(obj, dict) or not {"types", "primaryType", "message"} <= obj.keys():
         raise TypedDataError("typed data needs types, primaryType and message (eth_signTypedData_v3/v4)")
+    if not isinstance(obj["types"], dict):
+        raise TypedDataError("typed data: types must be a JSON object")
     types = dict(obj["types"])
     domain = obj.get("domain") or {}
+    if not isinstance(domain, dict) or not isinstance(obj["message"], dict):
+        raise TypedDataError("typed data: domain and message must be JSON objects")
     if "EIP712Domain" not in types:
         types["EIP712Domain"] = [{"name": n, "type": t} for n, t in DOMAIN_FIELDS if n in domain]
     if obj["primaryType"] not in types:

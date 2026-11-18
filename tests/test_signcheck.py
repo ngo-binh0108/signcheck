@@ -299,6 +299,25 @@ def test_unknown_type_lists_fields():
     assert levels(r) == ["note"]
 
 
+@pytest.mark.parametrize(
+    "request_",
+    [
+        {"method": "eth_sendTransaction", "params": []},
+        {"method": "eth_sendTransaction", "params": ["0xabc"]},
+        {"method": "wallet_sendCalls", "params": []},
+        {"method": "wallet_sendCalls", "params": [{"calls": "0xabc"}]},
+        {"calls": ["0xabc"]},
+        {"types": {"SafeMessage": [{"name": "message", "type": "bytes"}]}, "primaryType": "SafeMessage", "message": "0x12"},
+        {"types": [], "primaryType": "Mail", "message": {}},
+    ],
+)
+def test_malformed_requests_are_reported_not_crashed(request_, capsys):
+    with pytest.raises(eip712.TypedDataError):
+        explain(request_)
+    assert main([json.dumps(request_)]) == 1
+    assert capsys.readouterr().err.startswith("signcheck: ")
+
+
 # ---------------------------------------------------------------- command line
 
 
