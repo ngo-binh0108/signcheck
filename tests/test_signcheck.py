@@ -1,5 +1,8 @@
+import codecs
+import io
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -322,6 +325,22 @@ def test_cli_quiet_prints_one_line_per_problem(capsys):
 def test_cli_quiet_is_silent_without_problems(capsys):
     assert main([str(EXAMPLES / "siwe.json"), "-q"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_cli_reads_stdin_as_utf8_whatever_the_console_encoding(capsys, monkeypatch, tmp_path):
+    request = json.dumps({"method": "personal_sign", "params": ["Café ✓", ALICE]}, ensure_ascii=False)
+    path = tmp_path / "request.json"
+    path.write_text(request, encoding="utf-8")
+    assert main([str(path), "--json"]) == 0
+    from_file = json.loads(capsys.readouterr().out)
+
+    # a Windows pipe: UTF-8 bytes (here with a BOM) behind a cp1252 text wrapper
+    stdin = io.TextIOWrapper(io.BytesIO(codecs.BOM_UTF8 + request.encode("utf-8")), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdin", stdin)
+    assert main(["-", "--json"]) == 0
+    from_stdin = json.loads(capsys.readouterr().out)
+    assert from_stdin == from_file
+    assert {"name": "message", "value": "Café ✓"} in from_stdin["fields"]
 
 
 def test_cli_quiet_and_json_cannot_be_combined():

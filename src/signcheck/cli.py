@@ -43,6 +43,10 @@ def read_input(source: str | None) -> str:
     if source in (None, "-"):
         if sys.stdin.isatty():
             raise SystemExit("paste a request on stdin, or pass a file, JSON or 0x calldata as an argument (see --help)")
+        # Read bytes and decode them ourselves: on Windows a piped stdin is decoded
+        # with the console code page, which garbles non-ASCII text and changes hashes.
+        if hasattr(sys.stdin, "buffer"):
+            return sys.stdin.buffer.read().decode("utf-8-sig")
         return sys.stdin.read()
     path = Path(source)
     if len(source) < 260 and not source.lstrip().startswith(("{", "0x")) and path.is_file():
