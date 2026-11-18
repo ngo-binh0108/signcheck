@@ -385,6 +385,15 @@ def test_cli_reads_stdin_as_utf8_whatever_the_console_encoding(capsys, monkeypat
     assert {"name": "message", "value": "Café ✓"} in from_stdin["fields"]
 
 
+def test_cli_names_a_missing_file(tmp_path, capsys):
+    for missing in ("reqest.json", str(tmp_path / "request")):
+        with pytest.raises(SystemExit) as exc:
+            main([missing])
+        assert exc.value.code == f"signcheck: no such file: {missing}"
+    assert main(["not a request"]) == 1  # plain text still gets the format error
+    assert "neither JSON nor" in capsys.readouterr().err
+
+
 def test_cli_quiet_and_json_cannot_be_combined():
     with pytest.raises(SystemExit):
         main([str(EXAMPLES / "siwe.json"), "--quiet", "--json"])

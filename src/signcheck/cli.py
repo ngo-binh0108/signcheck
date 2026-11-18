@@ -49,8 +49,11 @@ def read_input(source: str | None) -> str:
             return sys.stdin.buffer.read().decode("utf-8-sig")
         return sys.stdin.read()
     path = Path(source)
-    if len(source) < 260 and not source.lstrip().startswith(("{", "0x")) and path.is_file():
-        return path.read_text(encoding="utf-8-sig")
+    if len(source) < 260 and not source.lstrip().startswith(("{", "[", "0x")):
+        if path.is_file():
+            return path.read_text(encoding="utf-8-sig")
+        if path.suffix.lower() in (".json", ".txt") or path.parent != Path("."):
+            raise SystemExit(f"signcheck: no such file: {source}")
     return source
 
 
